@@ -111,7 +111,6 @@ pub fn get_nt_offsets(pdb: &mut PDB<Cursor<Vec<u8>>>) -> pdb::Result<NtOffsets> 
             if target_symbols.contains(&name.as_ref()) {
                 if let Some(rva) = data.offset.to_rva(&address_map) {
                     let addr = rva.0 as u64;
-                    println!("[|] Found {} at: 0x{:08X}", name.as_ref(), addr);
 
                     match name.as_ref() {
                         "PspCreateProcessNotifyRoutine" => offsets.psp_create_process_notify_routine = addr,
@@ -143,7 +142,7 @@ pub fn get_nt_offsets(pdb: &mut PDB<Cursor<Vec<u8>>>) -> pdb::Result<NtOffsets> 
     }
 
     if &found_symbols.len() != &target_symbols.len() {
-        println!("[!] PANIC! Not all symbols resolved. Exiting for safety. Check OS version...");
+        println!("[!] PANIC! Not all symbols resolved. Exiting for safety. Check OS version and stuff...");
         process::exit(-1);
     }
 

