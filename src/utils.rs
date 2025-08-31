@@ -1,4 +1,5 @@
 use windows::Win32::System::SystemInformation::GetVersion;
+use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
@@ -6,8 +7,7 @@ use winapi::um::tlhelp32::{
 use winapi::shared::minwindef::{DWORD};     // Can also use LPVOID
 
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt; 
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use std::os::windows::ffi::OsStringExt;
 use reqwest::blocking::get;
 use std::io::Cursor;
 use pdb::PDB;

