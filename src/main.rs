@@ -1,15 +1,11 @@
 use std::{thread, time};
-use std::process::Command;
-
 use std::ffi::{c_void};
-use std::ptr::NonNull;
-use winapi::shared::minwindef::{DWORD};     /// Can add LPVOID, etc.
-//use winapi::um::handleapi::{CloseHandle};
 
 mod utils;
 mod pdb_utils;
 mod km_utils;
 mod xp_utils;
+mod mem;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[+] =-=-=- WinDbgX Kernel Debugger -=-=-=");
@@ -164,9 +160,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Sleeping for 10 min
-    //let sleepy_time = time::Duration::from_millis(60000);
-    //thread::sleep(sleepy_time);
+
+    
+    let cb_read = xp_utils::read_cb(
+        process_create_notify_base, 
+        "PspCreateProcessNotifyRoutine"
+    );
+
+
+    // Clean up: Write 0x1 back to PM. Can't read it again! :D
+    mem::write_byte(pm.unwrap() as usize as u64, 0x1);
 
     // Pause & exit
     println!("");

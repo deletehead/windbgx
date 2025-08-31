@@ -4,13 +4,23 @@ use std::ptr::null_mut;
 use std::ptr;
 
 use winapi::shared::ntdef::HANDLE;
+use windows::Win32::Foundation::{BOOL};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
+use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+use windows::Win32::System::Threading::GetCurrentProcess;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::shared::ntdef::{NTSTATUS};
 use winapi::um::winnt::{
     FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
 };
 use winapi::um::ioapiset::DeviceIoControl;
+
+use crate::mem;
+use crate::km_utils;
+
+const STATUS_SUCCESS: NTSTATUS = 0;
+
 
 // Opens a handle to the device and returns it
 pub fn get_driver_handle() -> Result<HANDLE, u32> {
@@ -77,4 +87,39 @@ pub unsafe fn send_ioctl_to_driver(
 
     success
 }
+
+
+pub fn read_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u64>> {
+    println!("[>] Enumerating callback: {}", cb_type);
+
+    let result = Vec::with_capacity(0x40);
+
+    for i in 0..0x40 {
+        // Calculate the address for the i-th qword
+        let addr = base_address + (i * std::mem::size_of::<u64>()) as u64;
+
+        // Re-use your read_qword function
+        let value = mem::read_qword(addr)?;
+        if value != 0 {
+            let func_addr = mem::read_qword(value & 0xfffffffffffffff8)?;
+            let drv_name: String;
+            match km_utils::find_driver_name_from_addr(func_addr) {
+                Some(drv) => {
+                    drv_name = drv; // take ownership of the String
+                },
+                None => {
+                    println!("[-] Could not find driver name for address 0x{:16X}", func_addr);
+                    drv_name = String::from(""); // fallback
+                }
+            }
+            println!(
+                "[|]    [0x{:16X}]: 0x{:16X} in {}",
+                addr, func_addr, drv_name
+            );
+        }
+    }
+
+    Ok(result)
+}
+
 

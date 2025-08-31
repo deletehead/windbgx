@@ -1,7 +1,6 @@
 use std::ffi::{OsString};
 use std::os::windows::ffi::OsStringExt;
 use std::ffi::{c_void, CString};
-use std::ptr::null_mut;
 use std::slice::from_raw_parts;
 
 use winapi::shared::minwindef::{DWORD, LPVOID};
@@ -307,5 +306,4 @@ pub fn get_thread_info() -> Option<*mut core::ffi::c_void> {
         }
     }
 }
-
 

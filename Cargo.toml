@@ -23,6 +23,8 @@ winapi = { version = "0.3", features = [
 
 windows = { version = "0.52.0", features = [
     "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_SystemInformation",
     "Win32_Foundation",
