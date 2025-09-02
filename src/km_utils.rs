@@ -301,7 +301,6 @@ pub fn get_thread_info() -> Option<*mut core::ffi::c_void> {
             None
         } else {
             let last = *kthreads.last().unwrap();
-            println!("[+] Thread object address in KM: {:?}", last);
             Some(last)
         }
     }

