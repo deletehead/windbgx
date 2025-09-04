@@ -182,6 +182,7 @@ pub fn is_driver_name_matching_edr(driver: &str) -> bool {
         // FortiClient
         "fortiapd.sys",
         "FortiShield.sys",
+        "fortimon2.sys",
     ];
 
     // Compare case-insensitive
