@@ -32,6 +32,23 @@ pub struct NtOffsets {
     pub se_ci_callbacks: u64,
 }
 
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct FmOffsets {
+    pub flt_globals: u64,
+    pub globals_framelist: u64,
+    pub flt_resource_list_head_rlist: u64,
+    pub fltp_frame_links: u64,
+    pub fltp_frame_registeredfilters: u64,
+    pub flt_object_primarylink: u64,
+    pub flt_filter_driverobject: u64,
+    pub flt_filter_instancelist: u64,
+    pub driver_object_driverinit: u64,
+    pub flt_instance_callbacknodes: u64,
+    pub flt_instance_filterlink: u64
+}
+
+
 /// Generate the full URL for the PDB symbol file download
 pub fn pdb_symbol_url<P: AsRef<Path>>(path: P) -> io::Result<String> {
     let mut file = File::open(&path)?;
@@ -166,7 +183,7 @@ pub fn get_nt_offsets(pdb: &mut PDB<Cursor<Vec<u8>>>) -> pdb::Result<NtOffsets> 
     }
 
     println!(
-        "[+] Found {}/{} symbols and {}/{} structure members",
+        "[+] Found {}/{} symbols and {}/{} structure members for NT",
         found_symbols.len(),
         target_symbols.len(),
         found_members.len(),
@@ -184,6 +201,103 @@ pub fn get_nt_offsets(pdb: &mut PDB<Cursor<Vec<u8>>>) -> pdb::Result<NtOffsets> 
 
     Ok(offsets)
 }
+
+pub fn get_fm_offsets(pdb: &mut PDB<Cursor<Vec<u8>>>) -> pdb::Result<FmOffsets> {
+    let target_symbols: [&str; 1] = [
+        "FltGlobals",
+    ];
+
+    let symbol_table = pdb.global_symbols()?;
+    let address_map = pdb.address_map()?;
+
+    let mut found_symbols: HashSet<String> = HashSet::new();
+    let mut found_members: HashSet<String> = HashSet::new();
+    let mut symbols = symbol_table.iter();
+
+    // Initialize all offsets to 0
+    let mut offsets = FmOffsets::default();
+
+    while let Some(symbol) = symbols.next()? {
+        if let Ok(pdb::SymbolData::Public(data)) = symbol.parse() {
+            let name = data.name.to_string(); // Cow<'_, str>
+
+            if target_symbols.contains(&name.as_ref()) {
+                if let Some(rva) = data.offset.to_rva(&address_map) {
+                    let addr = rva.0 as u64;
+
+                    match name.as_ref() {
+                        "FltGlobals" => offsets.flt_globals = addr,
+                        _ => {}
+                    }
+
+                    found_symbols.insert(name.into_owned());
+                }
+            }
+        }
+    }
+
+    for &target in &target_symbols {
+        if !found_symbols.contains(target) {
+            println!("[!] Missing symbol: {}. Exiting for safety...", target);
+            std::process::exit(-1);
+        }
+    }
+
+    // =-=-> Get struct offsets
+    let struct_mems = [
+        ("_GLOBALS", "FrameList"),
+        ("_FLT_RESOURCE_LIST_HEAD", "rList"),
+        ("_FLTP_FRAME", "Links"),
+        ("_FLTP_FRAME", "RegisteredFilters"),
+        ("_FLT_OBJECT", "PrimaryLink"),
+        ("_FLT_FILTER", "DriverObject"),
+        ("_FLT_FILTER", "InstanceList"),
+        ("_DRIVER_OBJECT", "DriverInit"),
+        ("_FLT_INSTANCE", "CallbackNodes"),
+        ("_FLT_INSTANCE", "FilterLink"),
+    ];
+
+    for (struct_name, member_name) in struct_mems.iter() {
+        if let Ok(offset) = get_struct_member_offset(pdb, struct_name, member_name) {
+            match (*struct_name, *member_name) {
+                ("_GLOBALS", "FrameList") => offsets.globals_framelist = offset,
+                ("_FLT_RESOURCE_LIST_HEAD", "rList") => offsets.flt_resource_list_head_rlist = offset,
+                ("_FLTP_FRAME", "Links") => offsets.fltp_frame_links = offset,
+                ("_FLTP_FRAME", "RegisteredFilters") => offsets.fltp_frame_registeredfilters = offset,
+                ("_FLT_OBJECT", "PrimaryLink") => offsets.flt_object_primarylink = offset,
+                ("_FLT_FILTER", "DriverObject") => offsets.flt_filter_driverobject = offset,
+                ("_FLT_FILTER", "InstanceList") => offsets.flt_filter_instancelist = offset,
+                ("_DRIVER_OBJECT", "DriverInit") => offsets.driver_object_driverinit = offset,
+                ("_FLT_INSTANCE", "CallbackNodes") => offsets.flt_instance_callbacknodes = offset,
+                ("_FLT_INSTANCE", "FilterLink") => offsets.flt_instance_filterlink = offset,
+                _ => {}
+            }
+
+            found_members.insert(member_name.to_string());
+        }
+    }
+
+    println!(
+        "[+] Found {}/{} symbols and {}/{} structure members for FM",
+        found_symbols.len(),
+        target_symbols.len(),
+        found_members.len(),
+        struct_mems.len()
+    );
+
+    // Loop over expected members, not the found ones
+    for (struct_name, member_name) in struct_mems.iter() {
+        if !found_members.contains(&member_name.to_string()) {
+            println!("[!] Missing struct member: {}::{}. Exiting for safety...", struct_name, member_name);
+            std::process::exit(-1);
+        }
+    }
+
+
+    Ok(offsets)
+}
+
+
 
 
 // Custom error type for our function

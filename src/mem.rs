@@ -5,7 +5,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use std::ffi::CString;
 use windows::core::PCSTR;
 
-
+/* 
 type NtWriteVirtualMemory = unsafe extern "system" fn(
     ProcessHandle: HANDLE,
     BaseAddress: *mut std::ffi::c_void,
@@ -13,14 +13,15 @@ type NtWriteVirtualMemory = unsafe extern "system" fn(
     NumberOfBytesToWrite: usize,
     NumberOfBytesWritten: *mut usize,
 ) -> NTSTATUS;
+*/
 
 pub unsafe fn resolve_nt_write_virtual_memory() -> Option<
     unsafe extern "system" fn(
-        ProcessHandle: HANDLE,
-        BaseAddress: *mut core::ffi::c_void,
-        Buffer: *const core::ffi::c_void,
-        NumberOfBytesToWrite: usize,
-        NumberOfBytesWritten: *mut usize,
+        process_handle: HANDLE,
+        base_address: *mut core::ffi::c_void,
+        buffer: *const core::ffi::c_void,
+        number_of_bytes_to_write: usize,
+        number_of_bytes_written: *mut usize,
     ) -> NTSTATUS,
 > {
     // Convert Rust strings into proper null-terminated C strings
@@ -74,6 +75,7 @@ pub fn read_dword(address: u64) -> windows::core::Result<u32> {
     Ok(buffer)
 }
 
+/* 
 pub fn read_word(address: u64) -> windows::core::Result<u16> {
     let mut buffer: u16 = 0;
 
@@ -105,6 +107,7 @@ pub fn read_byte(address: u64) -> windows::core::Result<u8> {
 
     Ok(buffer)
 }
+*/
 
 pub fn write_qword(address: u64, value: u64) {
     unsafe {
@@ -112,7 +115,7 @@ pub fn write_qword(address: u64, value: u64) {
         let nt_write = resolve_nt_write_virtual_memory().expect("Failed to resolve NtWriteVirtualMemory");
                 // Call the function
         let mut bytes_written: usize = 0;
-        nt_write(
+        let _ = nt_write(
             GetCurrentProcess(),
             address as *mut core::ffi::c_void,
             &value as *const u64 as *const core::ffi::c_void,
@@ -128,7 +131,7 @@ pub fn write_dword(address: u64, value: u32) {
         let nt_write = resolve_nt_write_virtual_memory().expect("Failed to resolve NtWriteVirtualMemory");
                 // Call the function
         let mut bytes_written: usize = 0;
-        nt_write(
+        let _ = nt_write(
             GetCurrentProcess(),
             address as *mut core::ffi::c_void,
             &value as *const u32 as *const core::ffi::c_void,
@@ -138,6 +141,7 @@ pub fn write_dword(address: u64, value: u32) {
     }
 }
 
+/* 
 pub fn write_word(address: u64, value: u16) {
     unsafe {
         // Resolve the function
@@ -153,6 +157,7 @@ pub fn write_word(address: u64, value: u16) {
         );
     }
 }
+*/
 
 pub fn write_byte(address: u64, value: u8) {
     unsafe {
@@ -160,7 +165,7 @@ pub fn write_byte(address: u64, value: u8) {
         let nt_write = resolve_nt_write_virtual_memory().expect("Failed to resolve NtWriteVirtualMemory");
                 // Call the function
         let mut bytes_written: usize = 0;
-        nt_write(
+        let _ = nt_write(
             GetCurrentProcess(),
             address as *mut core::ffi::c_void,
             &value as *const u8 as *const core::ffi::c_void,

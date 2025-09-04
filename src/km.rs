@@ -15,25 +15,25 @@ use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 // NTSTATUS codes (simplified)
 const STATUS_SUCCESS: NTSTATUS = 0;
 const STATUS_INFO_LENGTH_MISMATCH: NTSTATUS = -1073741820; // 0xC0000004
-const SystemHandleInformation: ULONG = 0x10;
-const ObjectThreadType: u8 = 0x08; // This value is version-dependent; adjust per target OS
+const SYSTEM_HANDLE_INFORMATION_TYPE: ULONG = 0x10;
+const OBJECT_THREAD_TYPE: u8 = 0x08; // This value is version-dependent; adjust per target OS
 
 #[repr(C)]
 #[derive(Debug)]
-struct SYSTEM_HANDLE {
-    ProcessId: u32,
-    ObjectTypeIndex: u8,
-    Flags: u8,
-    HandleValue: u16,
-    Object: *mut c_void,
-    GrantedAccess: u32,
+struct SystemHandle {
+    process_id: u32,
+    object_type_index: u8,
+    flags: u8,
+    handle_value: u16,
+    object: *mut c_void,
+    granted_access: u32,
 }
 
 #[repr(C)]
 #[derive(Debug)]
-struct SYSTEM_HANDLE_INFORMATION {
-    NumberOfHandles: ULONG,
-    Handles: [SYSTEM_HANDLE; 1], // flexible array
+struct SystemHandleInformation {
+    number_of_handles: ULONG,
+    handles: [SystemHandle; 1], // flexible array
 }
 
 type NtQuerySystemInformationFn = unsafe extern "system" fn(
@@ -246,18 +246,18 @@ unsafe fn query_system_information(
 
 // Loop through handles and return a Vec of object pointers for the current thread
 unsafe fn collect_thread_objects(h_thread: HANDLE, data: &[u8]) -> Vec<*mut core::ffi::c_void> {
-    let header = data.as_ptr() as *const SYSTEM_HANDLE_INFORMATION;
-    let number_of_handles = (*header).NumberOfHandles as usize;
+    let header = data.as_ptr() as *const SystemHandleInformation;
+    let number_of_handles = (*header).number_of_handles as usize;
 
-    let first_handle_ptr = &(*header).Handles as *const SYSTEM_HANDLE;
+    let first_handle_ptr = &(*header).handles as *const SystemHandle;
     let handles_slice = from_raw_parts(first_handle_ptr, number_of_handles);
 
     let mut kthread_vec: Vec<*mut core::ffi::c_void> = Vec::new();
 
     for h in handles_slice {
-        if h.HandleValue as HANDLE == h_thread {
-            if h.ObjectTypeIndex == ObjectThreadType {
-                kthread_vec.push(h.Object);
+        if h.handle_value as HANDLE == h_thread {
+            if h.object_type_index == OBJECT_THREAD_TYPE {
+                kthread_vec.push(h.object);
             }
         }
     }
@@ -285,7 +285,7 @@ pub fn get_thread_info() -> Option<*mut core::ffi::c_void> {
         };
 
         // Query SystemHandleInformation
-        let data = match query_system_information(ntqsi, SystemHandleInformation) {
+        let data = match query_system_information(ntqsi, SYSTEM_HANDLE_INFORMATION_TYPE) {
             Some(d) => d,
             None => {
                 eprintln!("[-] NtQuerySystemInformation query failed.");

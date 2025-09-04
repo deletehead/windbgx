@@ -7,7 +7,6 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows::{
     core::PCWSTR,
-    core::HSTRING,
     Win32::System::Services::{
         OpenSCManagerW, OpenServiceW, StartServiceW, CloseServiceHandle,
         SC_MANAGER_CONNECT, SERVICE_START, SERVICE_QUERY_STATUS,

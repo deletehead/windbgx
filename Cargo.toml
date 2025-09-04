@@ -12,6 +12,7 @@ reqwest = { version = "0.12", features = ["blocking"] }
 winapi = { version = "0.3", features = [
     "processthreadsapi",
     "winuser",
+    "sysinfoapi",
     "winbase",
     "synchapi",
     "errhandlingapi",

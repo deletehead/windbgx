@@ -1,41 +1,121 @@
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::os::windows::ffi::OsStringExt;
 use std::io::Cursor;
-
-use windows::Win32::System::SystemInformation::GetVersion;
+use std::process;
+use winapi::shared::minwindef::DWORD;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-use winapi::shared::minwindef::{DWORD}; 
+use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+use winapi::um::sysinfoapi::GetVersionExA;
+use winapi::um::winnt::{OSVERSIONINFOA, VER_PLATFORM_WIN32_NT}; 
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
 };
-
 use reqwest::blocking::get;
 use pdb::PDB;
 
-/// Windows version checker
-pub fn get_windows_version_simple() -> &'static str {
-    unsafe {
-        let ver = GetVersion();
-        let major = (ver & 0xFF) as u32;
-        let minor = ((ver >> 8) & 0xFF) as u32;
 
-        match (major, minor) {
-            (10, 0) => "Windows 10/11 or Server 2016/2019",
-            (6, 3) => "Windows 8.1 / Server 2012 R2",
-            (6, 2) => "Windows 8 / Server 2012",
-            (6, 1) => "Windows 7 / Server 2008 R2",
-            (6, 0) => "Windows Vista / Server 2008",
-            _ => "Unknown Windows version",
+/// Checks Windows version and IORING support
+/// 
+/// Returns:
+/// - `true` if Windows supports IORINGs (Windows 11+)
+/// - `false` if Windows 8+ but no IORING support
+/// - Exits the program if Windows 7 or earlier
+pub fn version_check_and_do_we_have_ioring() -> bool {
+    // First check if we're on Windows 7 or earlier and exit if so
+    check_minimum_version();
+    
+    // Then check for IORING support
+    check_ioring_support()
+}
+
+/// Checks if the system meets minimum version requirements (Windows 8+)
+/// Exits the program if running on Windows 7 or earlier
+fn check_minimum_version() {
+    unsafe {
+        let mut version_info: OSVERSIONINFOA = std::mem::zeroed();
+        version_info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOA>() as u32;
+        
+        if GetVersionExA(&mut version_info) == 0 {
+            eprintln!("[-] Error: Failed to get Windows version information");
+            process::exit(1);
+        }
+        
+        // Check if we're on Windows NT platform
+        if version_info.dwPlatformId != VER_PLATFORM_WIN32_NT {
+            eprintln!("[-] Error: This program requires Windows NT-based operating system");
+            process::exit(1);
+        }
+        
+        // Windows version numbers:
+        // Windows 7: 6.1
+        // Windows 8: 6.2
+        // Windows 8.1: 6.3
+        // Windows 10: 10.0 (but may report as 6.2/6.3 due to compatibility)
+        // Windows 11: 10.0 (build 22000+)
+        
+        let major = version_info.dwMajorVersion;
+        let minor = version_info.dwMinorVersion;
+        
+        // Check for Windows 7 or earlier (version 6.1 or lower)
+        if major < 6 || (major == 6 && minor <= 1) {
+            eprintln!("[-] Error: This program requires Windows 8 or newer. Current version: {}.{}", major, minor);
+            eprintln!("[!] Windows 7 and earlier are not supported. Exiting for safety.");
+            process::exit(1);
+        }
+        
+        println!("[+] Windows version check passed (newer than Windows 7): {}.{}", major, minor);
+    }
+}
+
+/// Checks if the CreateIoRing function is available
+/// Returns true if IORINGs are supported, false otherwise
+fn check_ioring_support() -> bool {
+    unsafe {
+        // Try to load the API Set library for IoRing
+        let api_ms_win_core_ioring = CString::new("api-ms-win-core-ioring-l1-1-0.dll").unwrap();
+        let module_handle = GetModuleHandleA(api_ms_win_core_ioring.as_ptr());
+        
+        if module_handle.is_null() {
+            // If the API Set isn't loaded, try to load kernel32.dll
+            let kernel32 = CString::new("kernel32.dll").unwrap();
+            let kernel32_handle = GetModuleHandleA(kernel32.as_ptr());
+            
+            if kernel32_handle.is_null() {
+                println!("[-] Warning: Could not get handle to kernel32.dll");
+                return false;
+            }
+            
+            // Check for CreateIoRing in kernel32
+            let create_ioring = CString::new("CreateIoRing").unwrap();
+            let proc_address = GetProcAddress(kernel32_handle, create_ioring.as_ptr());
+            
+            if proc_address.is_null() {
+                println!("[*] IORINGs not supported: Leveraging Modus Previosa technique for read/write...");
+                return false;
+            } else {
+                println!("[*] IORINGs supported: Using IORINGs for read/write...");
+                return true;
+            }
+        } else {
+            // API Set is available, check for the function
+            let create_ioring = CString::new("CreateIoRing").unwrap();
+            let proc_address = GetProcAddress(module_handle, create_ioring.as_ptr());
+            
+            if proc_address.is_null() {
+                println!("[*] IORINGs not supported: Leveraging Modus Previosa technique for read/write...");
+                return false;
+            } else {
+                println!("[*] IORINGs supported: Using IORINGs for read/write...");
+                return true;
+            }
         }
     }
 }
 
-/// Downloads the appropriate symbol file from the URL and returns a byte stream
-pub fn download_pdb(url: &str) -> Result<PDB<Cursor<Vec<u8>>>, Box<dyn std::error::Error>> {
+
+/// Downloads the appropriate symbol file from the URL and returns a PDB handle
+pub fn download_pdb(url: &str) ->Result<PDB<'_, Cursor<Vec<u8>>>, Box<dyn std::error::Error>> {
     // Download the bytes into memory
     let response = get(url)?;
     if !response.status().is_success() {
