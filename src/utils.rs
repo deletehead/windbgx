@@ -11,6 +11,7 @@ use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
 };
+use winapi::um::processthreadsapi::GetCurrentProcessId;
 use reqwest::blocking::get;
 use pdb::PDB;
 
@@ -145,10 +146,10 @@ pub fn is_edr_dll_loaded(proc_id: DWORD) -> bool {
         // DLL prefixes to check (wide strings)
         let dll_prefixes: [&[u16]; 6] = [
             &['u' as u16, 'm' as u16, 'p' as u16, 'p' as u16, 'c' as u16], // CrowdStrike: umppc18721.dll
-            &['c' as u16, 'y' as u16, 'i' as u16, 'n' as u16, 'j' as u16],
-            &['c' as u16, 'y' as u16, 'v' as u16, 'e' as u16, 'r' as u16],
-            &['c' as u16, 'y' as u16, 'v' as u16, 'r' as u16, 't' as u16],
-            &['E' as u16, 'd' as u16, 'r' as u16, 'D' as u16, 'o' as u16],
+            &['c' as u16, 'y' as u16, 'i' as u16, 'n' as u16, 'j' as u16], // Cortex
+            &['c' as u16, 'y' as u16, 'v' as u16, 'e' as u16, 'r' as u16], // Cortex
+            &['c' as u16, 'y' as u16, 'v' as u16, 'r' as u16, 't' as u16], // Cortex
+            &['E' as u16, 'd' as u16, 'r' as u16, 'D' as u16, 'o' as u16], 
             &['I' as u16, 'n' as u16, 'P' as u16, 'r' as u16, 'o' as u16], // SentinelOne
         ];
 
@@ -183,5 +184,11 @@ pub fn is_edr_dll_loaded(proc_id: DWORD) -> bool {
     }
 }
 
+pub fn is_edr_dll_loaded_in_self() -> bool {
+    if is_edr_dll_loaded(GetCurrentProcessId()) {
+        return true;
+    }
 
+    false
+}
 

