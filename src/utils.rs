@@ -1,19 +1,27 @@
 use std::ffi::{CString, OsString};
 use std::os::windows::ffi::OsStringExt;
 use std::io::Cursor;
-use std::process;
-use winapi::shared::minwindef::DWORD;
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use std::{process, thread};
+use std::ptr;
+use winapi::shared::minwindef::{FALSE, DWORD};
+use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::sysinfoapi::GetVersionExA;
+use winapi::um::errhandlingapi::GetLastError;
+use winapi::um::winbase::CREATE_NEW_CONSOLE;
 use winapi::um::winnt::{OSVERSIONINFOA, VER_PLATFORM_WIN32_NT}; 
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W,
     TH32CS_SNAPMODULE,
 };
-use winapi::um::processthreadsapi::GetCurrentProcessId;
+use winapi::um::processthreadsapi::{
+    GetCurrentProcessId, CreateProcessA, PROCESS_INFORMATION, STARTUPINFOA
+};
+
 use reqwest::blocking::get;
 use pdb::PDB;
+use std::time::Duration;
+
 
 
 /// Checks Windows version and IORING support
@@ -184,11 +192,65 @@ pub fn is_edr_dll_loaded(proc_id: DWORD) -> bool {
     }
 }
 
+
 pub fn is_edr_dll_loaded_in_self() -> bool {
-    if is_edr_dll_loaded(GetCurrentProcessId()) {
-        return true;
+    unsafe {
+        if is_edr_dll_loaded(GetCurrentProcessId()) {
+            return true;
+        }
     }
 
     false
 }
 
+
+pub fn start_proc_and_check_dll() -> bool {
+    let mut si: STARTUPINFOA = unsafe { std::mem::zeroed() };
+    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    
+    si.cb = std::mem::size_of::<STARTUPINFOA>() as DWORD;
+
+    // Create command string - note: this needs to be mutable for CreateProcessA
+    let command = CString::new("cmd.exe /C timeout /T 3").unwrap();
+    let mut command_buf = command.into_bytes_with_nul();
+
+    // Start the process
+    let success = unsafe {
+        CreateProcessA(
+            ptr::null(),                          // lpApplicationName
+            command_buf.as_mut_ptr() as *mut i8,  // lpCommandLine (mutable)
+            ptr::null_mut(),                      // lpProcessAttributes
+            ptr::null_mut(),                      // lpThreadAttributes
+            FALSE,                                // bInheritHandles
+            CREATE_NEW_CONSOLE,                   // dwCreationFlags
+            ptr::null_mut(),                      // lpEnvironment
+            ptr::null(),                          // lpCurrentDirectory
+            &mut si,                              // lpStartupInfo
+            &mut pi,                              // lpProcessInformation
+        )
+    };
+
+    if success == FALSE {
+        let error = unsafe { GetLastError() };
+        println!("[-] Failed to start process! Error: {}", error);
+        return false;
+    }
+
+    // Wait for a moment to ensure the process is initialized
+    thread::sleep(Duration::from_millis(1000));
+
+    // Check if any of the DLLs are loaded in the new process
+    let result = is_edr_dll_loaded(pi.dwProcessId);
+
+    // Close handles
+    unsafe {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+
+    if !result {
+        println!("[+] EDR DLL not found in process! Game on.");
+    }
+
+    result
+}
